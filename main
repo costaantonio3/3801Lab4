@@ -150,6 +150,16 @@ Lc = (d/sqrt(2)) * (-f1 - f2 + f3 + f4);  % Roll moment
 Mc = (d/sqrt(2)) * (f1 - f2 - f3 + f4);   % Pitch moment
 Nc = km * (f1 - f2 + f3 - f4);            % Yaw moment
 
+% Aerodynamic drag forces (from PDF equations)
+Xa = -nu * u * abs(u);
+Ya = -nu * v * abs(v);
+Za = -nu * w * abs(w);
+
+% Aerodynamic drag moments (from PDF equations)
+La = -mu * p * abs(p);
+Ma = -mu * q * abs(q);
+Na = -mu * r * abs(r);
+
 % Rotation matrix from body to inertial frame
 R_BI = [cos(theta)*cos(psi), sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi), cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
         cos(theta)*sin(psi), sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi), cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
@@ -162,7 +172,7 @@ y_dot = pos_dot(2);
 z_dot = pos_dot(3);
 
 % Translational dynamics: body frame velocity derivatives
-% Control forces in body frame (no forces in x or y directions)
+% Total forces in body frame (control + aerodynamic)
 Xc = 0;
 Yc = 0;
 % Zc already computed above
@@ -170,20 +180,20 @@ Yc = 0;
 % Gravity force in body frame (transform from inertial to body)
 g_body = R_BI' * [0; 0; m*g];
 
-% Translational dynamics with cross-product terms
-u_dot = (Xc + g_body(1))/m + r*v - q*w;
-v_dot = (Yc + g_body(2))/m + p*w - r*u;
-w_dot = (Zc + g_body(3))/m + q*u - p*v;
+% Translational dynamics with cross-product terms and aerodynamic drag
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
 
 % Rotational kinematics: Euler angle derivatives
 phi_dot = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
 theta_dot = q*cos(phi) - r*sin(phi);
 psi_dot = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
 
-% Rotational dynamics: body frame angular acceleration
-p_dot = (Lc + (Iyy - Izz)*q*r)/Ixx;
-q_dot = (Mc + (Izz - Ixx)*p*r)/Iyy;
-r_dot = (Nc + (Ixx - Iyy)*p*q)/Izz;
+% Rotational dynamics: body frame angular acceleration with aerodynamic moments
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
 
 % Assemble derivative vector
 var_dot = [x_dot; y_dot; z_dot; u_dot; v_dot; w_dot; 
