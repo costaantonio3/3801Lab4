@@ -1,0 +1,312 @@
+%% This is for the +5 m/s east problem with 90 degree yaw
+
+
+clear;
+clc;
+close all;
+
+%% ========================================================================
+%% PLOTTING FUNCTION
+%% ========================================================================
+function PlotAircraftSim(time, aircraft_state_array, control_input_array, fig, col)
+% PlotAircraftSim: Plots the results of a full simulation
+% Inputs:
+%   time - n x 1 vector of time values
+%   aircraft_state_array - 12 x n array of aircraft states
+%   control_input_array - 4 x n array of control inputs [Zc; Lc; Mc; Nc]
+%   fig - 6 x 1 vector of figure numbers to plot
+%   col - plotting color/style (e.g., 'b-', 'r--')
+
+% Figure 1: Inertial Position (x, y, z)
+figure(fig(1));
+subplot(3,1,1);
+plot(time, aircraft_state_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('x (m)'); title('X Position'); grid on;
+subplot(3,1,2);
+plot(time, aircraft_state_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('y (m)'); title('Y Position'); grid on;
+subplot(3,1,3);
+plot(time, aircraft_state_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('z (m)'); title('Z Position'); grid on;
+
+% Figure 2: Euler Angles (phi, theta, psi)
+figure(fig(2));
+subplot(3,1,1);
+plot(time, rad2deg(aircraft_state_array(7,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\phi (deg)'); title('Roll Angle'); grid on;
+subplot(3,1,2);
+plot(time, rad2deg(aircraft_state_array(8,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\theta (deg)'); title('Pitch Angle'); grid on;
+subplot(3,1,3);
+plot(time, rad2deg(aircraft_state_array(9,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\psi (deg)'); title('Yaw Angle'); grid on;
+
+% Figure 3: Inertial Velocity in Body Frame (u, v, w)
+figure(fig(3));
+subplot(3,1,1);
+plot(time, aircraft_state_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('u (m/s)'); title('Body X Velocity'); grid on;
+subplot(3,1,2);
+plot(time, aircraft_state_array(5,:), col); hold on;
+xlabel('Time (s)'); ylabel('v (m/s)'); title('Body Y Velocity'); grid on;
+subplot(3,1,3);
+plot(time, aircraft_state_array(6,:), col); hold on;
+xlabel('Time (s)'); ylabel('w (m/s)'); title('Body Z Velocity'); grid on;
+
+% Figure 4: Angular Velocity (p, q, r)
+figure(fig(4));
+subplot(3,1,1);
+plot(time, rad2deg(aircraft_state_array(10,:)), col); hold on;
+xlabel('Time (s)'); ylabel('p (deg/s)'); title('Roll Rate'); grid on;
+subplot(3,1,2);
+plot(time, rad2deg(aircraft_state_array(11,:)), col); hold on;
+xlabel('Time (s)'); ylabel('q (deg/s)'); title('Pitch Rate'); grid on;
+subplot(3,1,3);
+plot(time, rad2deg(aircraft_state_array(12,:)), col); hold on;
+xlabel('Time (s)'); ylabel('r (deg/s)'); title('Yaw Rate'); grid on;
+
+% Figure 5: Control Inputs (Zc, Lc, Mc, Nc)
+figure(fig(5));
+subplot(4,1,1);
+plot(time, control_input_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('Z_c (N)'); title('Control Force Z'); grid on;
+subplot(4,1,2);
+plot(time, control_input_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('L_c (N*m)'); title('Control Moment L (Roll)'); grid on;
+subplot(4,1,3);
+plot(time, control_input_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('M_c (N*m)'); title('Control Moment M (Pitch)'); grid on;
+subplot(4,1,4);
+plot(time, control_input_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('N_c (N*m)'); title('Control Moment N (Yaw)'); grid on;
+
+% Figure 6: 3D Path
+figure(fig(6));
+plot3(aircraft_state_array(1,:), aircraft_state_array(2,:), -aircraft_state_array(3,:), col); hold on;
+% Mark start (green) and finish (red)
+plot3(aircraft_state_array(1,1), aircraft_state_array(2,1), -aircraft_state_array(3,1), ...
+      'go', 'MarkerSize', 10, 'MarkerFaceColor', 'g');
+plot3(aircraft_state_array(1,end), aircraft_state_array(2,end), -aircraft_state_array(3,end), ...
+      'rs', 'MarkerSize', 10, 'MarkerFaceColor', 'r');
+xlabel('X (m)'); ylabel('Y (m)'); zlabel('Height (m)');
+title('3D Aircraft Path'); grid on; axis equal;
+view(3);
+end
+
+%% ========================================================================
+%% EQUATIONS OF MOTION
+%% ========================================================================
+function var_dot = QuadrotorEOM(t, var, g, m, I, d, km, nu, mu, motor_forces)
+% QuadrotorEOM: Computes the derivatives of the quadrotor state vector
+% Inputs:
+%   t - time (s)
+%   var - 12x1 state vector [x; y; z; u; v; w; phi; theta; psi; p; q; r]
+%   g - acceleration due to gravity (m/s^2)
+%   m - mass (kg)
+%   I - 3x3 inertia matrix (kg*m^2)
+%   d - arm length (m)
+%   km - moment coefficient (N*m/N)
+%   nu - aerodynamic force coefficient (N/(m/s)^2)
+%   mu - aerodynamic moment coefficient (N*m/(rad/s)^2)
+%   motor_forces - 4x1 vector of motor forces [f1; f2; f3; f4] (N)
+% Output:
+%   var_dot - 12x1 derivative of state vector
+
+% Extract state variables
+% Position in inertial frame
+x = var(1);
+y = var(2);
+z = var(3);
+
+% Velocity in body frame
+u = var(4);
+v = var(5);
+w = var(6);
+
+% Euler angles
+phi = var(7);    % roll
+theta = var(8);  % pitch
+psi = var(9);    % yaw
+
+% Angular velocity in body frame
+p = var(10);
+q = var(11);
+r = var(12);
+
+% Extract inertia components
+Ixx = I(1,1);
+Iyy = I(2,2);
+Izz = I(3,3);
+
+% Extract motor forces
+f1 = motor_forces(1);
+f2 = motor_forces(2);
+f3 = motor_forces(3);
+f4 = motor_forces(4);
+
+% Compute control force and moments using ASEN 3728 equations
+% Note: Zc is defined as negative sum (force acts downward in body frame)
+Zc = -f1 - f2 - f3 - f4;
+
+% Control moments
+Lc = (d/sqrt(2)) * (-f1 - f2 + f3 + f4);  % Roll moment
+Mc = (d/sqrt(2)) * (f1 - f2 - f3 + f4);   % Pitch moment
+Nc = km * (f1 - f2 + f3 - f4);            % Yaw moment
+
+% Aerodynamic drag forces (from PDF equations)
+Xa = -nu * u * abs(u);
+Ya = -nu * v * abs(v);
+Za = -nu * w * abs(w);
+
+% Aerodynamic drag moments (from PDF equations)
+La = -mu * p * abs(p);
+Ma = -mu * q * abs(q);
+Na = -mu * r * abs(r);
+
+% Rotation matrix from body to inertial frame
+R_BI = [cos(theta)*cos(psi), sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi), cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
+        cos(theta)*sin(psi), sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi), cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
+        -sin(theta),         sin(phi)*cos(theta),                             cos(phi)*cos(theta)];
+
+% Translational kinematics: inertial frame position derivatives
+pos_dot = R_BI * [u; v; w];
+x_dot = pos_dot(1);
+y_dot = pos_dot(2);
+z_dot = pos_dot(3);
+
+% Translational dynamics: body frame velocity derivatives
+% Total forces in body frame (control + aerodynamic)
+Xc = 0;
+Yc = 0;
+% Zc already computed above
+
+% Gravity force in body frame (transform from inertial to body)
+g_body = R_BI' * [0; 0; m*g];
+
+% Translational dynamics with cross-product terms and aerodynamic drag
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
+
+% Rotational kinematics: Euler angle derivatives
+phi_dot = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
+theta_dot = q*cos(phi) - r*sin(phi);
+psi_dot = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
+
+% Rotational dynamics: body frame angular acceleration with aerodynamic moments
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
+
+% Assemble derivative vector
+var_dot = [x_dot; y_dot; z_dot; u_dot; v_dot; w_dot; 
+           phi_dot; theta_dot; psi_dot; p_dot; q_dot; r_dot];
+end
+
+%% Function to compute motor forces from desired control forces/moments
+function motor_forces = control_to_motors(Zc, Lc, Mc, Nc, d, km)
+% Inverse matrix from ASEN 3728 notes
+% [f1; f2; f3; f4] = inv(A) * [Zc; Lc; Mc; Nc]
+
+A_inv = [-1/4,      -sqrt(2)/(2*d),  sqrt(2)/(2*d),   1/(4*km);
+         -1/4,      -sqrt(2)/(2*d), -sqrt(2)/(2*d),  -1/(4*km);
+         -1/4,       sqrt(2)/(2*d), -sqrt(2)/(2*d),   1/(4*km);
+         -1/4,       sqrt(2)/(2*d),  sqrt(2)/(2*d),  -1/(4*km)];
+
+motor_forces = A_inv * [Zc; Lc; Mc; Nc];
+end
+
+%% ========================================================================
+%% MAIN SIMULATION SCRIPT
+%% ========================================================================
+
+% Quadrotor parameters
+m = 0.068;          % mass (kg)
+g = 9.81;           % gravity (m/s^2)
+d = 0.060;          % arm length (m)
+km = 0.0024;        % moment coefficient (N*m/N)
+
+% Inertia matrix
+Ixx = 5.8e-5;       % kg*m^2
+Iyy = 7.2e-5;       % kg*m^2
+Izz = 1.0e-4;       % kg*m^2
+I = diag([Ixx, Iyy, Izz]);
+
+% Aerodynamic coefficients
+nu = 1e-3;          % N/(m/s)^2
+mu = 2e-6;          % N*m/(rad/s)^2
+
+u_desired = 5;  % Desired inertial Y velocity (m/s) with 90 deg yaw
+
+% X force balance equation: Xa - m*g*sin(theta) = 0
+% With 90 deg yaw, negative pitch (backward) produces +Y motion via +u
+% Note the sign change: we need -sin(theta) for backward pitch
+trim_equation_x = @(theta) -nu * (u_desired*cos(theta)) * abs(u_desired*cos(theta)) - m*g*sin(theta);
+
+% Initial guess for theta (negative for backward pitch)
+theta0_guess = -atan(nu * u_desired^2 / (m*g));
+theta0 = fsolve(trim_equation_x, theta0_guess);
+
+% Now solve for Zc from the Z force balance
+% Zc = -Za - m*g*cos(theta)
+u_body = u_desired * cos(theta0);
+w_body = u_desired * sin(theta0);  % Positive since theta is negative
+Za_trim = -nu * w_body * abs(w_body);
+Zc_trim = -Za_trim - m*g*cos(theta0);
+
+% Initial position
+x0 = 0;  y0 = 0;  z0 = 0;
+
+% Initial body velocities for zero inertial Z velocity
+u0 = u_desired * cos(theta0);
+v0 = 0;
+w0 = u_desired * sin(theta0);
+
+% Initial Euler angles
+phi0 = 0;
+psi0 = pi/2;  % 90 degrees yaw
+
+% Initial angular velocities
+p0 = 0;  q0 = 0;  r0 = 0;
+
+% Trim control moments
+Lc_trim = 0;
+Mc_trim = 0;
+Nc_trim = 0;
+
+% Calculate motor forces for trim
+motor_forces_trim = control_to_motors(Zc_trim, Lc_trim, Mc_trim, Nc_trim, d, km);
+
+
+var0 = [x0; y0; z0; u0; v0; w0; phi0; theta0; psi0; p0; q0; r0];
+% Simulation time
+t_span = [0 10];  % 10 seconds
+options = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
+
+% Simulate with trim motor forces
+[t, var] = ode45(@(t, var) QuadrotorEOM(t, var, g, m, I, d, km, nu, mu, motor_forces_trim), ...
+                 t_span, var0, options);
+
+% Prepare data for plotting function
+aircraft_state_array = var';  % Transpose to make it 12 x n
+
+% Compute control inputs at each time step
+n = length(t);
+control_input_array = zeros(4, n);
+for i = 1:n
+    f1 = motor_forces_trim(1);
+    f2 = motor_forces_trim(2);
+    f3 = motor_forces_trim(3);
+    f4 = motor_forces_trim(4);
+    
+    control_input_array(1,i) = -f1 - f2 - f3 - f4;  % Zc
+    control_input_array(2,i) = (d/sqrt(2)) * (-f1 - f2 + f3 + f4);  % Lc
+    control_input_array(3,i) = (d/sqrt(2)) * (f1 - f2 - f3 + f4);   % Mc
+    control_input_array(4,i) = km * (f1 - f2 + f3 - f4);            % Nc
+end
+
+% Define figure numbers
+fig = [1; 2; 3; 4; 5; 6];
+
+% Plot using the PlotAircraftSim function
+PlotAircraftSim(t, aircraft_state_array, control_input_array, fig, 'b-');
