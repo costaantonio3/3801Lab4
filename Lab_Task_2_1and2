@@ -13,9 +13,9 @@ mu = 2e-6;            % N*m/(rad/s)^2
 t_span = [0 10];                          % 10 sec window
 opts   = odeset('RelTol',1e-6,'AbsTol',1e-8);
 
-% --- Hover trim state and trim inputs (level hover at origin) ---
-var_trim = zeros(12,1);              % [x y z u v w phi theta psi p q r]^T
-Zc0      = -m*g;                     % body +Z control (acts downward)
+% Hover trim state and trim inputs (level hover at origin)
+var_trim = zeros(12,1);         % [x y z u v w phi theta psi p q r]^T
+Zc0 = -m*g;                     % body +Z control (acts downward)
 motor_forces_trim = control_to_motors(Zc0, 0, 0, 0, d, km);
 
 % --- Six Initial-Condition deviations about hover (no control changes) ---
@@ -36,7 +36,7 @@ caseNames = { ...
     '+0.1 rad/s pitch rate (IC only)'; ...
     '+0.1 rad/s yaw rate (IC only)' };
 
-% --- Build constant linear model A,B about hover (numerical Jacobians) ---
+% Build constant linear model A,B about hover
 [A_lin, B_lin] = getLinearModelHover(g,m,I,d,km,nu,mu, var_trim, motor_forces_trim, Zc0);
 
 % For the lab's required function signature, wrap A,B in a handle:
@@ -45,7 +45,7 @@ QuadLin = @(t,xd) QuadrotorEOM_Linearized(t, xd, A_lin, B_lin, [deltaFc; deltaGc
 
 %% RUN ALL SIX DEVIATION CASES
 for k = 1:nCases
-    % -------- Nonlinear sim (blue) --------
+    % Nonlinear sim (blue) 
     x0_nl = ICs(:,k);
     [tNL, xNL] = ode45(@(t,x) QuadrotorEOM(t, x, g,m,I,d,km,nu,mu, motor_forces_trim), ...
                        t_span, x0_nl, opts);
@@ -61,14 +61,14 @@ for k = 1:nCases
                km * (f1 - f2 + f3 - f4) ];
     U_NL = Utrim .* ones(4,nN);
 
-    % -------- Linearized sim (red dashed) --------
+    % Linearized sim (red dashed)
     x0_dev = x0_nl - var_trim;                       % deviation IC
     [tL, xDev] = ode45(QuadLin, t_span, x0_dev, opts);
     X_L  = (xDev.' + var_trim);                      % convert back to full state
     nL   = numel(tL);
     U_L  = Utrim .* ones(4,nL);                      % same absolute controls for plotting
 
-    % -------- Plot with your ORIGINAL plotting function --------
+    % Plot with your ORIGINAL plotting function 
     figs = (100*k + (1:6)).';                        % unique set per case
     PlotAircraftSim(tNL, X_NL, U_NL, figs, 'b-');    % nonlinear (blue)
     PlotAircraftSim(tL,  X_L,  U_L,  figs, 'r--');   % linearized (red dashed)
