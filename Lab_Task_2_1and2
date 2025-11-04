@@ -1,0 +1,164 @@
+%% Lab Task 2: Hover IC deviations (Nonlinear vs Linearized) 
+clear; clc; close all;
+
+%% PARAMETERS 
+m  = 0.068;           % kg
+g  = 9.81;            % m/s^2
+d  = 0.060;           % m
+km = 0.0024;          % N*m/N
+I  = diag([5.8e-5, 7.2e-5, 1.0e-4]);   % kg*m^2
+nu = 1e-3;            % N/(m/s)^2
+mu = 2e-6;            % N*m/(rad/s)^2
+
+t_span = [0 10];                          % 10 sec window
+opts   = odeset('RelTol',1e-6,'AbsTol',1e-8);
+
+% --- Hover trim state and trim inputs (level hover at origin) ---
+var_trim = zeros(12,1);              % [x y z u v w phi theta psi p q r]^T
+Zc0      = -m*g;                     % body +Z control (acts downward)
+motor_forces_trim = control_to_motors(Zc0, 0, 0, 0, d, km);
+
+% --- Six Initial-Condition deviations about hover (no control changes) ---
+nCases = 6;
+ICs = repmat(var_trim,1,nCases);
+ICs(7,1)  = deg2rad(5);   % a) +5 deg roll
+ICs(8,2)  = deg2rad(5);   % b) +5 deg pitch
+ICs(9,3)  = deg2rad(5);   % c) +5 deg yaw
+ICs(10,4) = 0.1;          % d) +0.1 rad/s roll rate
+ICs(11,5) = 0.1;          % e) +0.1 rad/s pitch rate
+ICs(12,6) = 0.1;          % f) +0.1 rad/s yaw rate
+
+caseNames = { ...
+    '+5 deg roll (IC only)'; ...
+    '+5 deg pitch (IC only)'; ...
+    '+5 deg yaw (IC only)'; ...
+    '+0.1 rad/s roll rate (IC only)'; ...
+    '+0.1 rad/s pitch rate (IC only)'; ...
+    '+0.1 rad/s yaw rate (IC only)' };
+
+% --- Build constant linear model A,B about hover (numerical Jacobians) ---
+[A_lin, B_lin] = getLinearModelHover(g,m,I,d,km,nu,mu, var_trim, motor_forces_trim, Zc0);
+
+% For the lab's required function signature, wrap A,B in a handle:
+deltaFc = 0; deltaGc = [0;0;0];  % no control deviation for Task 2.2
+QuadLin = @(t,xd) QuadrotorEOM_Linearized(t, xd, A_lin, B_lin, [deltaFc; deltaGc]);
+
+%% RUN ALL SIX DEVIATION CASES
+for k = 1:nCases
+    % -------- Nonlinear sim (blue) --------
+    x0_nl = ICs(:,k);
+    [tNL, xNL] = ode45(@(t,x) QuadrotorEOM(t, x, g,m,I,d,km,nu,mu, motor_forces_trim), ...
+                       t_span, x0_nl, opts);
+    X_NL = xNL.';    % 12 x n
+    nN   = numel(tNL);
+
+    % Control inputs (hold hover trim motors constant)
+    f1 = motor_forces_trim(1); f2 = motor_forces_trim(2);
+    f3 = motor_forces_trim(3); f4 = motor_forces_trim(4);
+    Utrim = [ -f1 - f2 - f3 - f4; ...
+               (d/sqrt(2)) * (-f1 - f2 + f3 + f4); ...
+               (d/sqrt(2)) * ( f1 - f2 - f3 + f4); ...
+               km * (f1 - f2 + f3 - f4) ];
+    U_NL = Utrim .* ones(4,nN);
+
+    % -------- Linearized sim (red dashed) --------
+    x0_dev = x0_nl - var_trim;                       % deviation IC
+    [tL, xDev] = ode45(QuadLin, t_span, x0_dev, opts);
+    X_L  = (xDev.' + var_trim);                      % convert back to full state
+    nL   = numel(tL);
+    U_L  = Utrim .* ones(4,nL);                      % same absolute controls for plotting
+
+    % -------- Plot with your ORIGINAL plotting function --------
+    figs = (100*k + (1:6)).';                        % unique set per case
+    PlotAircraftSim(tNL, X_NL, U_NL, figs, 'b-');    % nonlinear (blue)
+    PlotAircraftSim(tL,  X_L,  U_L,  figs, 'r--');   % linearized (red dashed)
+
+    for f = 1:6
+        figure(figs(f));
+        sgtitle(['Case ' num2str(k) ': ' caseNames{k} ' — Nonlinear (blue) vs Linearized (red dashed)']);
+    end
+end
+
+%% LOCAL FUNCTIONS 
+function var_dot = QuadrotorEOM(~, var, g, m, I, d, km, nu, mu, motor_forces)
+% Nonlinear EOM (same structure you used)
+u=var(4); v=var(5); w=var(6);
+phi=var(7); theta=var(8); psi=var(9);
+p=var(10); q=var(11); r=var(12);
+
+Ixx=I(1,1); Iyy=I(2,2); Izz=I(3,3);
+f1=motor_forces(1); f2=motor_forces(2); f3=motor_forces(3); f4=motor_forces(4);
+
+Zc = -f1 - f2 - f3 - f4;
+Lc = (d/sqrt(2)) * (-f1 - f2 + f3 + f4);
+Mc = (d/sqrt(2)) * ( f1 - f2 - f3 + f4);
+Nc = km * (f1 - f2 + f3 - f4);
+
+Xa = -nu * u * abs(u);
+Ya = -nu * v * abs(v);
+Za = -nu * w * abs(w);
+La = -mu * p * abs(p);
+Ma = -mu * q * abs(q);
+Na = -mu * r * abs(r);
+
+R_BI = [cos(theta)*cos(psi),  sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi),  cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
+        cos(theta)*sin(psi),  sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi),  cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
+       -sin(theta),           sin(phi)*cos(theta),                              cos(phi)*cos(theta)];
+
+pos_dot = R_BI * [u; v; w];
+x_dot = pos_dot(1); y_dot = pos_dot(2); z_dot = pos_dot(3);
+
+g_body = R_BI' * [0; 0; m*g];
+
+Xc=0; Yc=0;
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
+
+phi_dot   = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
+theta_dot = q*cos(phi) - r*sin(phi);
+psi_dot   = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
+
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
+
+var_dot = [x_dot; y_dot; z_dot; u_dot; v_dot; w_dot; ...
+           phi_dot; theta_dot; psi_dot; p_dot; q_dot; r_dot];
+end
+
+function motor_forces = control_to_motors(Zc, Lc, Mc, Nc, d, km)
+A_inv = [-1/4,      -sqrt(2)/(2*d),  sqrt(2)/(2*d),   1/(4*km);
+         -1/4,      -sqrt(2)/(2*d), -sqrt(2)/(2*d),  -1/(4*km);
+         -1/4,       sqrt(2)/(2*d), -sqrt(2)/(2*d),   1/(4*km);
+         -1/4,       sqrt(2)/(2*d),  sqrt(2)/(2*d),  -1/(4*km)];
+motor_forces = A_inv * [Zc; Lc; Mc; Nc];
+end
+
+function [A,B] = getLinearModelHover(g,m,I,d,km,nu,mu, var_trim, motor_forces_trim, Zc0)
+% Numerical Jacobians A = df/dx, B = df/du|_trim, where u=[Zc Lc Mc Nc]^T
+nX=12; nU=4; A=zeros(nX); B=zeros(nX,nU);
+f0 = QuadrotorEOM(0, var_trim, g,m,I,d,km,nu,mu, motor_forces_trim);
+
+% State Jacobian
+epsX = 1e-6;
+for i=1:nX
+    dx = zeros(nX,1); dx(i)=epsX;
+    f1 = QuadrotorEOM(0, var_trim+dx, g,m,I,d,km,nu,mu, motor_forces_trim);
+    A(:,i) = (f1 - f0)/epsX;
+end
+
+% Input Jacobian via control channels
+epsU = [1e-3; 1e-5; 1e-5; 1e-5]; % small perturbations
+for j=1:nU
+    dU = zeros(4,1); dU(j)=epsU(j);
+    mot_j = control_to_motors(Zc0 + dU(1), dU(2), dU(3), dU(4), d, km);
+    fU = QuadrotorEOM(0, var_trim, g,m,I,d,km,nu,mu, mot_j);
+    B(:,j) = (fU - f0)/epsU(j);
+end
+end
+
+function xdot = QuadrotorEOM_Linearized(~, x_dev, A, B, u_dev)
+% Deviation dynamics about hover: xdot = A x + B u
+xdot = A*x_dev + B*u_dev;
+end
