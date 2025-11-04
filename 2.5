@@ -1,0 +1,81 @@
+function var_dot = QuadrotorEOMwithRateFeedback(t, var, g, m, I, nu, mu)
+% Extract state variables
+% Position in inertial frame
+x = var(1);
+y = var(2);
+z = var(3);
+
+% Velocity in body frame
+u = var(4);
+v = var(5);
+w = var(6);
+
+% Euler angles
+phi = var(7);    % roll
+theta = var(8);  % pitch
+psi = var(9);    % yaw
+
+% Angular velocity in body frame
+p = var(10);
+q = var(11);
+r = var(12);
+
+% Extract inertia components
+Ixx = I(1,1);
+Iyy = I(2,2);
+Izz = I(3,3);
+
+% Call RotationDerivativeFeedback for Fc and Gc
+[Fc, Gc] = RotationDerivativeFeedback(var, m, g);
+
+% Define Xc, Yc, Zc and Lc, Mc, Nc
+Xc = Fc(1);
+Yc = Fc(2);
+Zc = Fc(3);
+Lc = Gc(1);
+Mc = Gc(2);
+Nc = Gc(3);
+
+% Aerodynamic drag forces (from PDF equations)
+Xa = -nu * u * abs(u);
+Ya = -nu * v * abs(v);
+Za = -nu * w * abs(w);
+
+% Aerodynamic drag moments (from PDF equations)
+La = -mu * p * abs(p);
+Ma = -mu * q * abs(q);
+Na = -mu * r * abs(r);
+
+% Rotation matrix from body to inertial frame
+R_BI = [cos(theta)*cos(psi), sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi), cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
+        cos(theta)*sin(psi), sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi), cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
+        -sin(theta),         sin(phi)*cos(theta),                             cos(phi)*cos(theta)];
+
+% Translational kinematics: inertial frame position derivatives
+pos_dot = R_BI * [u; v; w];
+x_dot = pos_dot(1);
+y_dot = pos_dot(2);
+z_dot = pos_dot(3);
+
+% Gravity force in body frame (transform from inertial to body)
+g_body = R_BI' * [0; 0; m*g];
+
+% Translational dynamics with cross-product terms and aerodynamic drag
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
+
+% Rotational kinematics: Euler angle derivatives
+phi_dot = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
+theta_dot = q*cos(phi) - r*sin(phi);
+psi_dot = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
+
+% Rotational dynamics: body frame angular acceleration with aerodynamic moments
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
+
+% Assemble derivative vector
+var_dot = [x_dot; y_dot; z_dot; u_dot; v_dot; w_dot; 
+           phi_dot; theta_dot; psi_dot; p_dot; q_dot; r_dot];
+end
