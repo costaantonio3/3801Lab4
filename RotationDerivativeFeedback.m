@@ -1,0 +1,15 @@
+function [Fc, Gc] = RotationDerivativeFeedback(var, m, g)
+% Define p, q, r
+p = var(10);
+q = var(11);
+r = var(12);
+
+% Calculate Fc
+Fc = [0, 0, m*g]'; % (N)
+
+% Define the gain
+gain = 0.004; % (Nm/(rad/s))
+
+% Calculate Gc
+Gc = -gain.*[p q, r]'; % (Nm)
+end
