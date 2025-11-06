@@ -1,32 +1,120 @@
 %% Lab Task 2: Hover IC deviations (Nonlinear vs Linearized) 
 clear; clc; close all;
 
-%% PARAMETERS 
-m  = 0.068;           % kg
-g  = 9.81;            % m/s^2
-d  = 0.060;           % m
-km = 0.0024;          % N*m/N
-I  = diag([5.8e-5, 7.2e-5, 1.0e-4]);   % kg*m^2
-nu = 1e-3;            % N/(m/s)^2
-mu = 2e-6;            % N*m/(rad/s)^2
+%% PLOTTING FUNCTION
 
-t_span = [0 10];                          % 10 sec window
+function PlotAircraftSim(time, aircraft_state_array, control_input_array, fig, col)
+% PlotAircraftSim: Plots the results of a full simulation
+% Inputs:
+%   time - n x 1 vector of time values
+%   aircraft_state_array - 12 x n array of aircraft states
+%   control_input_array - 4 x n array of control inputs [Zc; Lc; Mc; Nc]
+%   fig - 6 x 1 vector of figure numbers to plot
+%   col - plotting color/style (e.g., 'b-', 'r--')
+
+% Figure 1: Inertial Position (x, y, z)
+figure(fig(1));
+subplot(3,1,1);
+plot(time, aircraft_state_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('x (m)'); title('X Position'); grid on;
+subplot(3,1,2);
+plot(time, aircraft_state_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('y (m)'); title('Y Position'); grid on;
+subplot(3,1,3);
+plot(time, aircraft_state_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('z (m)'); title('Z Position'); grid on;
+
+% Figure 2: Euler Angles (phi, theta, psi)
+figure(fig(2));
+subplot(3,1,1);
+plot(time, rad2deg(aircraft_state_array(7,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\phi (deg)'); title('Roll Angle'); grid on;
+subplot(3,1,2);
+plot(time, rad2deg(aircraft_state_array(8,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\theta (deg)'); title('Pitch Angle'); grid on;
+subplot(3,1,3);
+plot(time, rad2deg(aircraft_state_array(9,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\psi (deg)'); title('Yaw Angle'); grid on;
+
+% Figure 3: Inertial Velocity in Body Frame (u, v, w)
+figure(fig(3));
+subplot(3,1,1);
+plot(time, aircraft_state_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('u (m/s)'); title('Body X Velocity'); grid on;
+subplot(3,1,2);
+plot(time, aircraft_state_array(5,:), col); hold on;
+xlabel('Time (s)'); ylabel('v (m/s)'); title('Body Y Velocity'); grid on;
+subplot(3,1,3);
+plot(time, aircraft_state_array(6,:), col); hold on;
+xlabel('Time (s)'); ylabel('w (m/s)'); title('Body Z Velocity'); grid on;
+
+% Figure 4: Angular Velocity (p, q, r)
+figure(fig(4));
+subplot(3,1,1);
+plot(time, rad2deg(aircraft_state_array(10,:)), col); hold on;
+xlabel('Time (s)'); ylabel('p (deg/s)'); title('Roll Rate'); grid on;
+subplot(3,1,2);
+plot(time, rad2deg(aircraft_state_array(11,:)), col); hold on;
+xlabel('Time (s)'); ylabel('q (deg/s)'); title('Pitch Rate'); grid on;
+subplot(3,1,3);
+plot(time, rad2deg(aircraft_state_array(12,:)), col); hold on;
+xlabel('Time (s)'); ylabel('r (deg/s)'); title('Yaw Rate'); grid on;
+
+% Figure 5: Control Inputs (Zc, Lc, Mc, Nc)
+figure(fig(5));
+subplot(4,1,1);
+plot(time, control_input_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('Z_c (N)'); title('Control Force Z'); grid on;
+subplot(4,1,2);
+plot(time, control_input_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('L_c (N*m)'); title('Control Moment L (Roll)'); grid on;
+subplot(4,1,3);
+plot(time, control_input_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('M_c (N*m)'); title('Control Moment M (Pitch)'); grid on;
+subplot(4,1,4);
+plot(time, control_input_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('N_c (N*m)'); title('Control Moment N (Yaw)'); grid on;
+
+% Figure 6: 3D Path
+figure(fig(6));
+plot3(aircraft_state_array(1,:), aircraft_state_array(2,:), -aircraft_state_array(3,:), col); hold on;
+% Mark start (green) and finish (red)
+plot3(aircraft_state_array(1,1), aircraft_state_array(2,1), -aircraft_state_array(3,1), ...
+      'go', 'MarkerSize', 10, 'MarkerFaceColor', 'g');
+plot3(aircraft_state_array(1,end), aircraft_state_array(2,end), -aircraft_state_array(3,end), ...
+      'rs', 'MarkerSize', 10, 'MarkerFaceColor', 'r');
+xlabel('X (m)'); ylabel('Y (m)'); zlabel('Height (m)');
+title('3D Aircraft Path'); grid on; axis equal;
+view(3);
+end
+
+
+%% PARAMETERS 
+m  = 0.068;            % kg
+g  = 9.81;             % m/s^2
+d  = 0.060;            % m
+km = 0.0024;           % N*m/N
+I  = diag([5.8e-5, 7.2e-5, 1.0e-4]);   % kg*m^2  (Ix, Iy, Iz)
+nu = 1e-3;             % N/(m/s)^2 (nonlinear aero drag coefficient)
+mu = 2e-6;             % N*m/(rad/s)^2 (nonlinear aero moment coefficient)
+
+t_span = [0 10];                           
 opts   = odeset('RelTol',1e-6,'AbsTol',1e-8);
 
-% Hover trim state and trim inputs (level hover at origin)
-var_trim = zeros(12,1);         % [x y z u v w phi theta psi p q r]^T
-Zc0 = -m*g;                     % body +Z control (acts downward)
+% Hover trim state and trim inputs (level hover at origin) 
+var_trim = zeros(12,1);                    
+Zc0      = -m*g;            % body +Z control 
 motor_forces_trim = control_to_motors(Zc0, 0, 0, 0, d, km);
 
-% --- Six Initial-Condition deviations about hover (no control changes) ---
+% Six Initial-Condition deviations about hover (no control changes)
 nCases = 6;
 ICs = repmat(var_trim,1,nCases);
 ICs(7,1)  = deg2rad(5);   % a) +5 deg roll
 ICs(8,2)  = deg2rad(5);   % b) +5 deg pitch
 ICs(9,3)  = deg2rad(5);   % c) +5 deg yaw
-ICs(10,4) = 0.1;          % d) +0.1 rad/s roll rate
-ICs(11,5) = 0.1;          % e) +0.1 rad/s pitch rate
-ICs(12,6) = 0.1;          % f) +0.1 rad/s yaw rate
+ICs(10,4) = 0.1;         % d) +0.1 rad/s roll rate
+ICs(11,5) = 0.1;         % e) +0.1 rad/s pitch rate
+ICs(12,6) = 0.1;         % f) +0.1 rad/s yaw rate
 
 caseNames = { ...
     '+5 deg roll (IC only)'; ...
@@ -36,20 +124,17 @@ caseNames = { ...
     '+0.1 rad/s pitch rate (IC only)'; ...
     '+0.1 rad/s yaw rate (IC only)' };
 
-% Build constant linear model A,B about hover
-[A_lin, B_lin] = getLinearModelHover(g,m,I,d,km,nu,mu, var_trim, motor_forces_trim, Zc0);
+% Controls for linear model 
+deltaFc = 0;  % ΔZc (N)
+deltaGc = [0;0;0];  % [ΔLc; ΔMc; ΔNc] (N*m)
 
-% For the lab's required function signature, wrap A,B in a handle:
-deltaFc = 0; deltaGc = [0;0;0];  % no control deviation for Task 2.2
-QuadLin = @(t,xd) QuadrotorEOM_Linearized(t, xd, A_lin, B_lin, [deltaFc; deltaGc]);
-
-%% RUN ALL SIX DEVIATION CASES
+%% RUN ALL SIX DEVIATION CASES 
 for k = 1:nCases
-    % Nonlinear sim (blue) 
+    % Nonlinear sim (blue)
     x0_nl = ICs(:,k);
     [tNL, xNL] = ode45(@(t,x) QuadrotorEOM(t, x, g,m,I,d,km,nu,mu, motor_forces_trim), ...
                        t_span, x0_nl, opts);
-    X_NL = xNL.';    % 12 x n
+    X_NL = xNL.';                 % 12 x n
     nN   = numel(tNL);
 
     % Control inputs (hold hover trim motors constant)
@@ -61,17 +146,18 @@ for k = 1:nCases
                km * (f1 - f2 + f3 - f4) ];
     U_NL = Utrim .* ones(4,nN);
 
-    % Linearized sim (red dashed)
-    x0_dev = x0_nl - var_trim;                       % deviation IC
-    [tL, xDev] = ode45(QuadLin, t_span, x0_dev, opts);
-    X_L  = (xDev.' + var_trim);                      % convert back to full state
+    % Linearized sim (red dashed) using explicit hover linearization 
+    x0_dev = x0_nl - var_trim;                               
+    [tL, xDev] = ode45(@(t,xd) QuadrotorEOM_Linearized(t, xd, g, m, I, deltaFc, deltaGc), ...
+                       t_span, x0_dev, opts);
+    X_L  = (xDev.' + var_trim);                               
     nL   = numel(tL);
-    U_L  = Utrim .* ones(4,nL);                      % same absolute controls for plotting
+    U_L  = Utrim .* ones(4,nL);                              
 
     % Plot with your ORIGINAL plotting function 
-    figs = (100*k + (1:6)).';                        % unique set per case
-    PlotAircraftSim(tNL, X_NL, U_NL, figs, 'b-');    % nonlinear (blue)
-    PlotAircraftSim(tL,  X_L,  U_L,  figs, 'r--');   % linearized (red dashed)
+    figs = (100*k + (1:6)).';                                
+    PlotAircraftSim(tNL, X_NL, U_NL, figs, 'b-');             % nonlinear (blue)
+    PlotAircraftSim(tL,  X_L,  U_L,  figs, 'r--');            % linearized (red dashed)
 
     for f = 1:6
         figure(figs(f));
@@ -81,7 +167,7 @@ end
 
 %% LOCAL FUNCTIONS 
 function var_dot = QuadrotorEOM(~, var, g, m, I, d, km, nu, mu, motor_forces)
-% Nonlinear EOM (same structure you used)
+% Nonlinear EOM (your structure)
 u=var(4); v=var(5); w=var(6);
 phi=var(7); theta=var(8); psi=var(9);
 p=var(10); q=var(11); r=var(12);
@@ -135,30 +221,34 @@ A_inv = [-1/4,      -sqrt(2)/(2*d),  sqrt(2)/(2*d),   1/(4*km);
 motor_forces = A_inv * [Zc; Lc; Mc; Nc];
 end
 
-function [A,B] = getLinearModelHover(g,m,I,d,km,nu,mu, var_trim, motor_forces_trim, Zc0)
-% Numerical Jacobians A = df/dx, B = df/du|_trim, where u=[Zc Lc Mc Nc]^T
-nX=12; nU=4; A=zeros(nX); B=zeros(nX,nU);
-f0 = QuadrotorEOM(0, var_trim, g,m,I,d,km,nu,mu, motor_forces_trim);
+function xdot = QuadrotorEOM_Linearized(~, x_dev, g, m, I, deltaFc, deltaGc)
+% Explicit hover linearization per provided equations.
+% State order: [x y z u v w phi theta psi p q r]^T (all are deviations)
+Ix = I(1,1); Iy = I(2,2); Iz = I(3,3);
 
-% State Jacobian
-epsX = 1e-6;
-for i=1:nX
-    dx = zeros(nX,1); dx(i)=epsX;
-    f1 = QuadrotorEOM(0, var_trim+dx, g,m,I,d,km,nu,mu, motor_forces_trim);
-    A(:,i) = (f1 - f0)/epsX;
-end
+% Unpack
+dx   = x_dev(1);  dy   = x_dev(2);  dz   = x_dev(3); 
+du   = x_dev(4);  dv   = x_dev(5);  dw   = x_dev(6);
+dphi = x_dev(7);  dth  = x_dev(8);  dpsi = x_dev(9);
+dp   = x_dev(10); dq   = x_dev(11); dr   = x_dev(12);
 
-% Input Jacobian via control channels
-epsU = [1e-3; 1e-5; 1e-5; 1e-5]; % small perturbations
-for j=1:nU
-    dU = zeros(4,1); dU(j)=epsU(j);
-    mot_j = control_to_motors(Zc0 + dU(1), dU(2), dU(3), dU(4), d, km);
-    fU = QuadrotorEOM(0, var_trim, g,m,I,d,km,nu,mu, mot_j);
-    B(:,j) = (fU - f0)/epsU(j);
-end
-end
+% Controls (deviations)
+dZc = deltaFc;         
+dLc = deltaGc(1); dMc = deltaGc(2); dNc = deltaGc(3);
 
-function xdot = QuadrotorEOM_Linearized(~, x_dev, A, B, u_dev)
-% Deviation dynamics about hover: xdot = A x + B u
-xdot = A*x_dev + B*u_dev;
+% Kinematics
+dxdot   = du;           dydot   = dv;           dzdot  = dw;
+dphidot = dp;           dthdot  = dq;           dpsidot= dr;
+
+% Translational dynamics (body)
+dudot = -g * dth; % g*(-Δθ)
+dvdot =  g * dphi; % g*(+Δφ)
+dwdot = (1/m) * dZc; % vertical controlled by ΔZc
+
+% Rotational dynamics
+dpdot = (1/Ix) * dLc;
+dqdot = (1/Iy) * dMc;
+drdot = (1/Iz) * dNc;
+
+xdot = [dxdot; dydot; dzdot; dudot; dvdot; dwdot; dphidot; dthdot; dpsidot; dpdot; dqdot; drdot];
 end
