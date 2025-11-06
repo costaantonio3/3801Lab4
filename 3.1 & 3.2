@@ -1,0 +1,62 @@
+function [Fc, Gc] = InnerLoopFeedback(var)
+% INNERLOOPFEEDBACK  PD inner-loop for roll & pitch + yaw rate damper
+% Returns:
+%   Fc : 3x1 body-force vector  [0; 0; m*g]  (hover collective in +b3)
+%   Gc : 3x1 body-moment vector [ΔL_c; ΔM_c; ΔN_c]
+%
+% Notes:
+% - If your motor mapping expects hover at Zc = -m*g, change Fc(3) to -m*g.
+% - k1 = angle gain, k2 = rate gain (per axis).
+
+% ----------------- Hard-coded quad parameters (hover linearization) ------
+m  = 0.068;                 % kg
+g  = 9.81;                  % m/s^2
+Ix = 5.8e-5;                % kg*m^2  (roll)
+Iy = 7.2e-5;                % kg*m^2  (pitch)
+Iz = 1.0e-4;                % kg*m^2  (yaw)
+
+% ----------------- Desired real poles for (angle, rate) blocks ----------
+% Dominant time constant = 0.5 s  -> dominant pole = -2 s^-1
+lambda_dom  = -2;           % s^-1  (dominant, matches spec)
+lambda_fast = -6;           % s^-1  (faster real pole so dynamics are well-damped)
+
+% -------- Where k1, k2 are computed (per axis): -------------------------
+% For state-space A_cl = [0 1; -k1/I  -k2/I], the characteristic poly is:
+%   s^2 + (k2/I) s + (k1/I) = (s - lambda_dom)(s - lambda_fast)
+sum_p  = -(lambda_dom + lambda_fast);   % = 8
+prod_p = (lambda_dom * lambda_fast);    % = 12
+% ==> k2 = (sum of poles) * I,   k1 = (product of poles) * I
+k1_phi =  prod_p * Ix;    % angle gain for roll (φ)
+k2_p   =  sum_p  * Ix;    % rate  gain for roll (p)
+k1_th  =  prod_p * Iy;    % angle gain for pitch (θ)
+k2_q   =  sum_p  * Iy;    % rate  gain for pitch (q)
+
+% Yaw (spin) — keep Problem 2.3 derivative feedback:
+k_r = 0.004;              % N*m per (rad/s)
+
+% ----------------- Read states (deviations about hover) ------------------
+phi   = var(7);   % roll angle
+theta = var(8);   % pitch angle
+p     = var(10);  % roll rate
+q     = var(11);  % pitch rate
+r     = var(12);  % yaw rate
+
+% ----------------- Control laws (Problem 3.1) ----------------------------
+dLc = -(k1_phi*phi   + k2_p*p);     % roll moment command
+dMc = -(k1_th*theta  + k2_q*q);     % pitch moment command
+dNc = -(k_r*r);                     % yaw damper (rate only)
+
+% ----------------- Outputs ----------------------------------------------
+Fc = [0; 0; m*g];                   % body z-force ≡ weight (hover)
+Gc = [dLc; dMc; dNc];               % body moments
+
+% ----------------- Display gains once -----------------------------------
+persistent printed
+if isempty(printed)
+    fprintf('\nInnerLoopFeedback gains (real poles at {-2, -6} s^-1):\n');
+    fprintf('  Roll:   k1_phi (angle) = %.6g   k2_p (rate) = %.6g\n', k1_phi, k2_p);
+    fprintf('  Pitch:  k1_th  (angle) = %.6g   k2_q (rate) = %.6g\n', k1_th,  k2_q);
+    fprintf('  Yaw:    k_r (rate only) = %.6g\n\n', k_r);
+    printed = true;
+end
+end
