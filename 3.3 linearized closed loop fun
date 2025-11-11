@@ -1,0 +1,14 @@
+function var_dot = QuadrotorEOM_Linearized_ClosedLoop(t, var)
+% Closed-loop linearized quadrotor (task 3.3)
+
+    %constants
+    g = 9.81;
+    m = 0.068;
+    I = diag([5.8e-5, 7.2e-5, 1.0e-4]);
+
+    % control vecs from 3.2
+    [Fc, Gc] = InnerLoopFeedback(var);
+
+  
+    var_dot = QuadrotorEOM_Linearized(t, var, g, m, I, Fc, Gc);
+end
