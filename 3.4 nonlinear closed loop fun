@@ -1,0 +1,22 @@
+function var_dot = QuadrotorEOM_Nonlinear_ClosedLoop(t, var)
+% Closed-loop nonlinear quadrotor task 3.4
+% state order: [xE yE zE u v w phi theta psi p q r]^T
+
+    % quad params
+    g  = 9.81;
+    m  = 0.068;
+    I  = diag([5.8e-5, 7.2e-5, 1.0e-4]);
+    d  = 0.06;
+    km = 0.0024;
+    nu = 1e-3;
+    mu = 2e-6;
+
+    % desired control forces and moments from linear-designed controller
+    [Fc, Gc] = InnerLoopFeedback(var);     
+
+    % turn into rotor thrusts
+    motor_forces = ComputeMotorForces(Fc, Gc, d, km);
+
+    % run full nonlinear EOM
+    var_dot = QuadrotorEOM(t, var, g, m, I, d, km, nu, mu, motor_forces);
+end
