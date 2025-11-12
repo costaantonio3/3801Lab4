@@ -11,5 +11,6 @@ Fc = [0, 0, m*g]'; % (N)
 gain = 0.004; % (Nm/(rad/s))
 
 % Calculate Gc
-Gc = -gain.*[p q, r]'; % (Nm)
+Gc = -gain.*[p, q, r]'; % (Nm)
 end
+
