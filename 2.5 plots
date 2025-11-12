@@ -1,0 +1,250 @@
+%% Task 2.3/2.4: Rate-feedback effect on roll-rate, pitch-rate, yaw-rate ICs
+% - Runs 3 cases: d) p=+0.1 rad/s, e) q=+0.1 rad/s, f) r=+0.1 rad/s
+% - Overlays uncontrolled vs controlled nonlinear responses (same plot format as 2.1/2.2)
+% - Computes and plots motor thrusts f1..f4 for both cases
+
+clear; clc; close all;
+
+%% ----------------------------- Parameters ------------------------------
+m  = 0.068;            % kg
+g  = 9.81;             % m/s^2
+d  = 0.060;            % m (arm)
+km = 0.0024;           % N*m/N (yaw moment coefficient)
+I  = diag([5.8e-5, 7.2e-5, 1.0e-4]);   % kg*m^2 (Ix,Iy,Iz)
+nu = 1e-3;             % N/(m/s)^2   translational quad drag
+mu = 2e-6;             % N*m/(rad/s)^2 rotational quad damping
+
+t_span = [0 10];
+opts   = odeset('RelTol',1e-6,'AbsTol',1e-8);
+
+% Hover trim state
+x_trim = zeros(12,1);  % [x y z u v w phi theta psi p q r]^T
+
+% Build three ICs (d/e/f)
+IC = repmat(x_trim,1,3);
+IC(10,1) = 0.1;  % d) +0.1 rad/s roll-rate (p)
+IC(11,2) = 0.1;  % e) +0.1 rad/s pitch-rate (q)
+IC(12,3) = 0.1;  % f) +0.1 rad/s yaw-rate (r)
+caseNames = { ...
+  'd) +0.1 rad/s roll-rate', ...
+  'e) +0.1 rad/s pitch-rate', ...
+  'f) +0.1 rad/s yaw-rate' };
+
+%% ------------------------------ Run sims -------------------------------
+for k = 1:3
+    x0 = IC(:,k);
+
+    % --- Uncontrolled nonlinear (hover thrust only, no moments) ---
+    [tU, xU] = ode45(@(t,x) QuadrotorEOM_Uncontrolled(t,x,g,m,I,nu,mu), t_span, x0, opts);
+    XU = xU.'; nU = numel(tU);
+
+    % Control inputs (forces/moments) used in the uncontrolled sim:
+    FcU = repmat([0;0;m*g],1,nU);          % vertical hover force only
+    GcU = zeros(3,nU);                      % no moments
+    U_un = [ FcU(3,:); GcU ];               % [Zc; Lc; Mc; Nc] rows
+
+    % Motor thrusts (post-process)
+    Fmot_un = zeros(4,nU);
+    for i=1:nU
+        Fmot_un(:,i) = ComputeMotorForces(FcU(:,i), GcU(:,i), d, km);
+    end
+
+    % --- Controlled nonlinear (rate feedback via your function) ---
+    [tC, xC] = ode45(@(t,x) QuadrotorEOMwithRateFeedback(t,x,g,m,I,nu,mu), t_span, x0, opts);
+    XC = xC.'; nC = numel(tC);
+
+    % Control inputs (forces/moments) time-history + motor thrusts
+    FcC = zeros(3,nC); GcC = zeros(3,nC); Fmot_c = zeros(4,nC);
+    for i=1:nC
+        [Fc_i, Gc_i] = RotationDerivativeFeedback(XC(:,i), m, g);
+        FcC(:,i) = Fc_i; GcC(:,i) = Gc_i;
+        Fmot_c(:,i) = ComputeMotorForces(Fc_i, Gc_i, d, km);
+    end
+    U_ctl = [ FcC(3,:); GcC ];              % [Zc; Lc; Mc; Nc]
+
+    %% -------- Overlay plots: uncontrolled (blue) vs controlled (red) -----
+    figs = (200*k + (1:6)).';   % unique set of 6 figures per case
+    PlotAircraftSim(tU, XU, U_un, figs, 'b-');    % uncontrolled
+    PlotAircraftSim(tC, XC, U_ctl, figs, 'r--');  % controlled
+    for f=1:6
+        figure(figs(f));
+        sgtitle([caseNames{k} ' — Uncontrolled (blue) vs Controlled (red dashed)']);
+    end
+
+    %% ------------- Motor thrusts f1..f4: uncontrolled vs controlled -----
+    figMot = 200*k + 50;
+    figure(figMot); clf;
+    tl = tiledlayout(4,1,'TileSpacing','compact','Padding','compact');
+    title(tl,[caseNames{k} ' — Motor Thrusts (f1..f4)']);
+    nexttile; plot(tU,Fmot_un(1,:),'b-'); hold on; plot(tC,Fmot_c(1,:),'r--');
+      grid on; ylabel('f1 (N)'); legend('Uncontrolled','Controlled','Location','best');
+    nexttile; plot(tU,Fmot_un(2,:),'b-'); hold on; plot(tC,Fmot_c(2,:),'r--');
+      grid on; ylabel('f2 (N)');
+    nexttile; plot(tU,Fmot_un(3,:),'b-'); hold on; plot(tC,Fmot_c(3,:),'r--');
+      grid on; ylabel('f3 (N)');
+    nexttile; plot(tU,Fmot_un(4,:),'b-'); hold on; plot(tC,Fmot_c(4,:),'r--');
+      grid on; ylabel('f4 (N)'); xlabel('Time (s)');
+end
+
+%% ============================= Local functions ==========================
+function PlotAircraftSim(time, aircraft_state_array, control_input_array, fig, col)
+% Same 6-figure layout used earlier (positions, Euler angles, body vels, body rates, controls, 3D path)
+
+% 1) Inertial Position
+figure(fig(1));
+subplot(3,1,1); plot(time, aircraft_state_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('x (m)'); title('X Position'); grid on;
+subplot(3,1,2); plot(time, aircraft_state_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('y (m)'); title('Y Position'); grid on;
+subplot(3,1,3); plot(time, aircraft_state_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('z (m)'); title('Z Position'); grid on;
+
+% 2) Euler Angles
+figure(fig(2));
+subplot(3,1,1); plot(time, rad2deg(aircraft_state_array(7,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\phi (deg)'); title('Roll Angle'); grid on;
+subplot(3,1,2); plot(time, rad2deg(aircraft_state_array(8,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\theta (deg)'); title('Pitch Angle'); grid on;
+subplot(3,1,3); plot(time, rad2deg(aircraft_state_array(9,:)), col); hold on;
+xlabel('Time (s)'); ylabel('\psi (deg)'); title('Yaw Angle'); grid on;
+
+% 3) Body-frame velocities
+figure(fig(3));
+subplot(3,1,1); plot(time, aircraft_state_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('u (m/s)'); title('Body X Velocity'); grid on;
+subplot(3,1,2); plot(time, aircraft_state_array(5,:), col); hold on;
+xlabel('Time (s)'); ylabel('v (m/s)'); title('Body Y Velocity'); grid on;
+subplot(3,1,3); plot(time, aircraft_state_array(6,:), col); hold on;
+xlabel('Time (s)'); ylabel('w (m/s)'); title('Body Z Velocity'); grid on;
+
+% 4) Body rates
+figure(fig(4));
+subplot(3,1,1); plot(time, rad2deg(aircraft_state_array(10,:)), col); hold on;
+xlabel('Time (s)'); ylabel('p (deg/s)'); title('Roll Rate'); grid on;
+subplot(3,1,2); plot(time, rad2deg(aircraft_state_array(11,:)), col); hold on;
+xlabel('Time (s)'); ylabel('q (deg/s)'); title('Pitch Rate'); grid on;
+subplot(3,1,3); plot(time, rad2deg(aircraft_state_array(12,:)), col); hold on;
+xlabel('Time (s)'); ylabel('r (deg/s)'); title('Yaw Rate'); grid on;
+
+% 5) Controls [Zc; Lc; Mc; Nc]
+figure(fig(5));
+subplot(4,1,1); plot(time, control_input_array(1,:), col); hold on;
+xlabel('Time (s)'); ylabel('Z_c (N)'); title('Control Force Z'); grid on;
+subplot(4,1,2); plot(time, control_input_array(2,:), col); hold on;
+xlabel('Time (s)'); ylabel('L_c (N*m)'); title('Control Moment L'); grid on;
+subplot(4,1,3); plot(time, control_input_array(3,:), col); hold on;
+xlabel('Time (s)'); ylabel('M_c (N*m)'); title('Control Moment M'); grid on;
+subplot(4,1,4); plot(time, control_input_array(4,:), col); hold on;
+xlabel('Time (s)'); ylabel('N_c (N*m)'); title('Control Moment N'); grid on;
+
+% 6) 3D path
+figure(fig(6));
+plot3(aircraft_state_array(1,:), aircraft_state_array(2,:), -aircraft_state_array(3,:), col); hold on;
+plot3(aircraft_state_array(1,1), aircraft_state_array(2,1), -aircraft_state_array(3,1), 'go','MarkerFaceColor','g');
+plot3(aircraft_state_array(1,end), aircraft_state_array(2,end), -aircraft_state_array(3,end), 'rs','MarkerFaceColor','r');
+xlabel('X (m)'); ylabel('Y (m)'); zlabel('Height (m)'); title('3D Aircraft Path'); grid on; axis equal; view(3);
+end
+
+%% ------------------ Uncontrolled nonlinear EOM (hover thrust only) -----
+function var_dot = QuadrotorEOM_Uncontrolled(~, var, g, m, I, nu, mu)
+% No control moments, vertical hover force only: Fc=[0;0;m*g], Gc=[0;0;0]
+% State unpack
+x=var(1); y=var(2); z=var(3); %#ok<NASGU>
+u=var(4); v=var(5); w=var(6);
+phi=var(7); theta=var(8); psi=var(9);
+p=var(10); q=var(11); r=var(12);
+
+Ixx=I(1,1); Iyy=I(2,2); Izz=I(3,3);
+
+% Controls (uncontrolled case)
+Xc=0; Yc=0; Zc=-m*g;
+Lc=0; Mc=0; Nc=0;
+
+% Aero drags
+Xa = -nu*u*abs(u); Ya = -nu*v*abs(v); Za = -nu*w*abs(w);
+La = -mu*p*abs(p); Ma = -mu*q*abs(q); Na = -mu*r*abs(r);
+
+% Rotation matrix
+R_BI = [cos(theta)*cos(psi),  sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi),  cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
+        cos(theta)*sin(psi),  sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi),  cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
+       -sin(theta),           sin(phi)*cos(theta),                              cos(phi)*cos(theta)];
+pos_dot = R_BI*[u;v;w];
+x_dot=pos_dot(1); y_dot=pos_dot(2); z_dot=pos_dot(3);
+
+g_body = R_BI' * [0;0;m*g];
+
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
+
+phi_dot   = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
+theta_dot = q*cos(phi) - r*sin(phi);
+psi_dot   = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
+
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
+
+var_dot = [x_dot;y_dot;z_dot; u_dot;v_dot;w_dot; phi_dot;theta_dot;psi_dot; p_dot;q_dot;r_dot];
+end
+
+%% ------------- Controlled nonlinear EOM (your rate-feedback law) -------
+function var_dot = QuadrotorEOMwithRateFeedback(~, var, g, m, I, nu, mu)
+% Same structure as provided; uses RotationDerivativeFeedback for Fc,Gc
+x=var(1); y=var(2); z=var(3); %#ok<NASGU>
+u=var(4); v=var(5); w=var(6);
+phi=var(7); theta=var(8); psi=var(9);
+p=var(10); q=var(11); r=var(12);
+
+Ixx=I(1,1); Iyy=I(2,2); Izz=I(3,3);
+
+[Fc, Gc] = RotationDerivativeFeedback(var, m, g);
+Xc=Fc(1); Yc=Fc(2); Zc=Fc(3);
+Lc=Gc(1); Mc=Gc(2); Nc=Gc(3);
+
+Xa = -nu*u*abs(u); Ya = -nu*v*abs(v); Za = -nu*w*abs(w);
+La = -mu*p*abs(p); Ma = -mu*q*abs(q); Na = -mu*r*abs(r);
+
+R_BI = [cos(theta)*cos(psi),  sin(phi)*sin(theta)*cos(psi)-cos(phi)*sin(psi),  cos(phi)*sin(theta)*cos(psi)+sin(phi)*sin(psi);
+        cos(theta)*sin(psi),  sin(phi)*sin(theta)*sin(psi)+cos(phi)*cos(psi),  cos(phi)*sin(theta)*sin(psi)-sin(phi)*cos(psi);
+       -sin(theta),           sin(phi)*cos(theta),                              cos(phi)*cos(theta)];
+pos_dot = R_BI*[u;v;w];
+x_dot=pos_dot(1); y_dot=pos_dot(2); z_dot=pos_dot(3);
+
+g_body = R_BI' * [0;0;m*g];
+
+u_dot = (Xc + Xa + g_body(1))/m + r*v - q*w;
+v_dot = (Yc + Ya + g_body(2))/m + p*w - r*u;
+w_dot = (Zc + Za + g_body(3))/m + q*u - p*v;
+
+phi_dot   = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta);
+theta_dot = q*cos(phi) - r*sin(phi);
+psi_dot   = q*sin(phi)/cos(theta) + r*cos(phi)/cos(theta);
+
+p_dot = (Lc + La + (Iyy - Izz)*q*r)/Ixx;
+q_dot = (Mc + Ma + (Izz - Ixx)*p*r)/Iyy;
+r_dot = (Nc + Na + (Ixx - Iyy)*p*q)/Izz;
+
+var_dot = [x_dot;y_dot;z_dot; u_dot;v_dot;w_dot; phi_dot;theta_dot;psi_dot; p_dot;q_dot;r_dot];
+end
+
+%% ------------------------ Motor force back-solve ------------------------
+function motor_forces = ComputeMotorForces(Fc, Gc, d, km)
+% Fc=[Fx;Fy;Fz], Gc=[Lc;Mc;Nc]; solve A*f = b
+Zc = Fc(3);  Lc=Gc(1); Mc=Gc(2); Nc=Gc(3);
+a = d/sqrt(2);
+A = [-1  -1  -1  -1;
+     -a  -a   a   a;
+      a  -a  -a   a;
+      km -km  km -km];
+b = [Zc; Lc; Mc; Nc];
+motor_forces = A \ b; % [f1; f2; f3; f4]
+end
+
+%% ------------------------ Your rate feedback (given) --------------------
+function [Fc, Gc] = RotationDerivativeFeedback(var, m, g)
+p = var(10); q = var(11); r = var(12);
+Fc = [0; 0; -m*g];      % keep hover vertical force
+gain = 0.004;          % Nm/(rad/s)
+Gc  = -gain .* [p; q; r];
+end
